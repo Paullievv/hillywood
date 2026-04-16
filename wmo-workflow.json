@@ -1,0 +1,135 @@
+{
+  "name": "WMO AI Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wmo-aanvraag",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"toestemmingAI\"]}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "name": "Check Consent",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map(item => {\n  const d = item.json;\n  return {\n    json: {\n      token: \"citizen_\" + d.citizenId,\n      aanvraag: d.aanvraag,\n      leeftijdsgroep: d.leeftijd < 18 ? \"minor\" : d.leeftijd < 65 ? \"adult\" : \"senior\"\n    }\n  };\n});"
+      },
+      "name": "Data Minimalisatie",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/analyze",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{$json}}"
+      },
+      "name": "AI Analyse",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"risico\"]}}",
+              "operation": "equal",
+              "value2": "hoog"
+            }
+          ],
+          "number": [],
+          "boolean": [
+            {
+              "value1": "={{$json[\"flags\"].length > 0}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "name": "Risk Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{ json: { beslissing: \"manual_review\" } }];"
+      },
+      "name": "Human Review",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map(item => {\n  return {\n    json: {\n      bericht: `Beste inwoner,\\n\\nUw aanvraag is beoordeeld met AI-ondersteuning.\\n\\nVoorstel: ${item.json.voorstel}\\n\\nEen medewerker kijkt dit na.\\n\\nMet vriendelijke groet,\\nGemeente`\n    }\n  };\n});"
+      },
+      "name": "Citizen Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1200, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_log (token, aanvraag, risico, flags, voorstel, onderbouwing)\nVALUES (\n  '{{$json[\"token\"]}}',\n  '{{$json[\"aanvraag\"]}}',\n  '{{$json[\"risico\"]}}',\n  {{$json[\"flags\"]}},\n  '{{$json[\"voorstel\"]}}',\n  '{{$json[\"onderbouwing\"]}}'\n);"
+      },
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Check Consent", "type": "main", "index": 0 }]]
+    },
+    "Check Consent": {
+      "main": [
+        [{ "node": "Data Minimalisatie", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Data Minimalisatie": {
+      "main": [[{ "node": "AI Analyse", "type": "main", "index": 0 }]]
+    },
+    "AI Analyse": {
+      "main": [[{ "node": "Risk Check", "type": "main", "index": 0 }]]
+    },
+    "Risk Check": {
+      "main": [
+        [{ "node": "Human Review", "type": "main", "index": 0 }],
+        [{ "node": "Citizen Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Human Review": {
+      "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]]
+    },
+    "Citizen Message": {
+      "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]]
+    }
+  }
+}
